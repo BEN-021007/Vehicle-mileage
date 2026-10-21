@@ -75,8 +75,9 @@
   <div class="ok-tip" id="localTip">本地运行模式：页面将直接调用公司内网数据接口完成统计，无需启动任何服务（需在公司内网或已连 VPN）。</div>
 
   <div class="warn" id="envWarn">
-    <span>当前页面是通过 <b>外网 https</b> 打开的，浏览器安全策略会禁止访问内网 http 接口，无法在这里完成统计。<br>
-    请点右侧按钮把本页保存到本地，双击用 Chrome / Edge 打开即可正常使用（需在公司内网环境）。</span>
+    <span>当前页面通过 <b>外网 https</b> 打开：浏览器默认会禁止 https 页面访问内网 http 接口。
+    可以先点「开始统计」试一次（页面会自动探测能否连通）；若被拦截，请点右侧按钮把本页保存到本地，
+    双击用 Chrome / Edge 打开即可正常使用（需在公司内网环境）。</span>
     <button class="btn-ghost" id="btnSave">保存本页到本地</button>
   </div>
 
@@ -187,8 +188,7 @@ const BUCKETS = [
   { key: 'b3', label: '100000-200000km' },
   { key: 'b4', label: '≥200000km' }
 ];
-const LIMIT_MS = 24 * 3600 * 1000;
-const LS_LAST = 'mpd_last_';      // 24 小时限流记录
+const LS_LAST = 'mpd_last_';      // 最近一次统计时间（仅用于展示）
 const LS_RES = 'mpd_result_';     // 结果缓存
 
 /* ============================ 小工具 ============================ */
@@ -200,11 +200,6 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { store.mem[k] = v; } },
   mem: {}
 };
-function remainText(ms) {
-  ms = Math.max(0, ms);
-  const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000), s = Math.floor(ms % 60000 / 1000);
-  return pad(h) + ':' + pad(m) + ':' + pad(s);
-}
 function showModal(html) { $('modalBody').innerHTML = html; $('mask').classList.add('show'); }
 function hideModal() { $('mask').classList.remove('show'); }
 function xmlEsc(s) {
@@ -554,32 +549,31 @@ async function parseAndAggregate(u8, cfg, onRows) {
 }
 
 /* ============================ 拉取与合并 ============================ */
-function originOf(url) {
-  const m = /^(https?:\/\/[^/]+)/.exec(url);
-  return m ? m[1] + '/' : url;
-}
 function fetchTimeout(url, options, ms) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), ms);
   return fetch(url, Object.assign({}, options, { signal: ctl.signal })).finally(() => clearTimeout(timer));
 }
-/* 统计前的连通性自检：10 秒内连不上就直接告诉用户原因，不用等接口 90 秒 */
-async function probeReachable(base) {
-  try {
-    await fetchTimeout(base, { cache: 'no-store' }, 10000);
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: (e && e.name === 'AbortError') ? '连接超时（10 秒）' : ((e && e.message) || String(e)) };
+/* 统计前不做额外探测：直接请求真实接口（它有正确的 CORS 头），失败时再弹窗诊断 */
+function unreachableModal(err, https) {
+  let html = '无法连接公司内网数据服务，不能开始统计。<br><br>';
+  if (https) {
+    html += '<b>当前是外网 https 页面</b>，浏览器默认禁止 https 页面访问内网 http 接口'
+      + '（混合内容 + 私有网络访问限制，网页代码无法绕过）。<br>'
+      + '解决办法：<b>点击页面顶部「保存本页到本地」，双击用 Chrome / Edge 打开</b>；'
+      + '或把本页放到公司内网 http 站点上访问。<br><br>';
   }
-}
-function unreachableModal(err) {
-  showModal('无法连接公司内网数据服务，不能开始统计。<br><br>' +
-    '<b>请依次确认：</b><br>' +
-    '1）电脑已连公司内网（或已连 VPN）；<br>' +
-    '2）页面是<b>本地文件双击打开</b>的（file:// 或内网 http 站点），不是外网 https 网页；<br>' +
-    '3）浏览器用 <b>Chrome / Edge</b>（老版本 IE 内核不支持）；<br>' +
-    '4）公司代理或防火墙放行了对内网 172.16 段 8089 端口的访问。<br>' +
-    '<span style="color:#6b7280">原始错误：' + err + '</span>');
+  html += '<b>排查项：</b><br>'
+    + '1）电脑已连公司内网（或已连 VPN），172.16 段地址可达；<br>'
+    + '2）页面用<b>本地文件双击打开</b>（file://）或部署在内网 http 站点；<br>'
+    + '3）浏览器用 <b>Chrome / Edge</b>（IE 内核不支持）；<br>'
+    + '4）代理或防火墙放行内网 172.16 段 8089 端口；<br>'
+    + '5）若确需用 https 页面直连，必须由公司侧把接口以 https 暴露并配置 '
+    + 'CORS 与 <code>Access-Control-Allow-Private-Network</code> 响应头。<br>'
+    + '<span style="color:#6b7280">原始错误：' + err + '</span><br>'
+    + '<span style="color:#6b7280">定位方法：按 F12 打开控制台（Console），把红色报错整行发我，'
+    + '能区分「DNS / 连接超时 / 被 CORS 拦截 / 被私有网络策略拦截」。</span>';
+  showModal(html);
 }
 
 async function fetchBuffer(url, onPct) {
@@ -733,15 +727,13 @@ function refreshView() {
   $('btnRun').textContent = res ? '重新统计' : '开始统计';
   $('btnRun').disabled = running;
   render();
-  updateLimitTip();
+  updateLastTip();
 }
 
-function updateLimitTip() {
-  const src = currentSource();
-  const last = +(store.get(LS_LAST + src) || 0);
-  const remain = last + LIMIT_MS - Date.now();
-  $('limitTip').textContent = remain > 0
-    ? '【' + sourceName() + '】上次统计时间 ' + new Date(last).toLocaleString('zh-CN', { hour12: false }) + '，距下次可统计还有 ' + remainText(remain)
+function updateLastTip() {
+  const last = +(store.get(LS_LAST + currentSource()) || 0);
+  $('limitTip').textContent = last
+    ? '【' + sourceName() + '】上次统计时间 ' + new Date(last).toLocaleString('zh-CN', { hour12: false })
     : '';
 }
 
@@ -778,21 +770,8 @@ function netErrorHint(msg) {
 
 /* ============================ 统计主流程 ============================ */
 async function runStats() {
-  if (isHttpsPage()) {
-    showModal('当前页面是通过 <b>外网 https</b> 打开的，浏览器的安全策略（混合内容 + 私有网络访问限制）会禁止访问内网 http 接口，因此无法在这里统计。<br><br>' +
-      '请改为：<br>1）点击页面顶部「保存本页到本地」，双击用 Chrome / Edge 打开；<br>2）或在公司内网环境部署访问。');
-    return;
-  }
   const src = currentSource();
-  const last = +(store.get(LS_LAST + src) || 0);
-  const remain = last + LIMIT_MS - Date.now();
   if (running) { showModal('已有统计任务正在执行中，请等待当前任务完成后再试。'); return; }
-  if (remain > 0) {
-    showModal('【' + sourceName() + '】在 24 小时内只能统计一次。<br>上次统计时间：<b>' +
-      new Date(last).toLocaleString('zh-CN', { hour12: false }) + '</b><br>下次可统计时间：<b>' +
-      new Date(last + LIMIT_MS).toLocaleString('zh-CN', { hour12: false }) + '</b><br>剩余时间：<b>' + remainText(remain) + '</b>');
-    return;
-  }
 
   running = true;
   $('btnRun').disabled = true;
@@ -809,18 +788,6 @@ async function runStats() {
 
   try {
     const keys = src === 'all' ? Object.keys(SOURCES) : [src];
-
-    // 先做连通性自检，避免等接口 1~2 分钟才知道连不上
-    setProg('正在检测内网连通性...', 2);
-    const bases = [];
-    for (const k of keys) {
-      const b = originOf(SOURCES[k].url);
-      if (bases.indexOf(b) < 0) bases.push(b);
-    }
-    for (const b of bases) {
-      const r = await probeReachable(b);
-      if (!r.ok) { unreachableModal(r.error); return; }
-    }
     const parts = [];
     const span = 100 / keys.length;
     for (let i = 0; i < keys.length; i++) {
@@ -840,6 +807,9 @@ async function runStats() {
     const raw = (err && err.message) ? err.message : String(err);
     $('msg').className = 'msg error';
     $('msg').innerHTML = '失败：' + netErrorHint(raw);
+    if (/failed to fetch|networkerror|load failed|network request failed/i.test(raw)) {
+      unreachableModal(raw, isHttpsPage());
+    }
   } finally {
     running = false;
     refreshView();
@@ -1005,8 +975,6 @@ document.querySelectorAll('thead th').forEach(th => {
     render();
   };
 });
-setInterval(updateLimitTip, 1000);
-
 $('btnSave').onclick = savePageLocal;
 
 (function init() {
