@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>车型销量及行驶里程分布情况</title>
+<style>
+  :root { --bg:#f4f6fa; --primary:#2f6fed; --primary-dark:#1f52c0; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --head:#4472c4; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--text);
+    font-family:"Microsoft YaHei","PingFang SC","Segoe UI",Arial,sans-serif; font-size:14px; }
+  .wrap { max-width:1280px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
+  .card { background:#fff; border:1px solid var(--border); border-radius:10px; padding:18px; margin-bottom:18px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+  button { border:none; border-radius:6px; padding:9px 18px; font-size:14px; cursor:pointer; font-family:inherit; transition:.15s; }
+  .btn-primary { background:var(--primary); color:#fff; }
+  .btn-primary:hover:not(:disabled) { background:var(--primary-dark); }
+  .btn-ghost { background:#fff; color:var(--text); border:1px solid var(--border); }
+  .btn-ghost:hover:not(:disabled) { border-color:var(--primary); color:var(--primary); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  select, input[type=text] { padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; font-family:inherit; outline:none; background:#fff; }
+  input[type=text] { min-width:240px; }
+  select:focus, input:focus { border-color:var(--primary); }
+  .spacer { flex:1; }
+  .progress-wrap { margin-top:14px; display:none; }
+  .progress-wrap.show { display:block; }
+  .bar { height:8px; background:#eef1f7; border-radius:4px; overflow:hidden; }
+  .bar > i { display:block; height:100%; width:0; border-radius:4px; background:linear-gradient(90deg,#2f6fed,#56a0ff); transition:width .3s; }
+  .msg { margin-top:8px; font-size:13px; color:var(--muted); word-break:break-all; }
+  .msg.error { color:#d93025; }
+  .limit { margin-top:10px; font-size:13px; color:#b45309; min-height:18px; }
+  .stats { display:flex; flex-wrap:wrap; gap:12px; margin-top:14px; }
+  .stat { flex:1 1 150px; background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+  .stat .k { color:var(--muted); font-size:12px; }
+  .stat .v { font-size:20px; font-weight:600; margin-top:4px; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { padding:10px 12px; border-bottom:1px solid var(--border); }
+  thead th { background:var(--head); color:#fff; font-weight:600; text-align:center; position:sticky; top:0; z-index:2; cursor:pointer; user-select:none; white-space:nowrap; }
+  thead th:first-child { text-align:left; }
+  th .arrow { font-size:11px; opacity:.8; }
+  tbody td { text-align:center; }
+  tbody td:first-child { text-align:left; font-weight:500; }
+  tbody tr:nth-child(even) { background:#fafbfe; }
+  tbody tr:hover { background:#eef4ff; }
+  tfoot td { text-align:center; font-weight:700; background:#f1f5f9; border-top:2px solid var(--border); }
+  tfoot td:first-child { text-align:left; }
+  .table-box { max-height:68vh; overflow:auto; border:1px solid var(--border); border-radius:8px; }
+  .empty { padding:40px; text-align:center; color:var(--muted); }
+  .mask { position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:50; display:none; align-items:center; justify-content:center; }
+  .mask.show { display:flex; }
+  .modal { background:#fff; border-radius:10px; width:440px; max-width:90%; padding:20px 22px; box-shadow:0 8px 30px rgba(0,0,0,.18); }
+  .modal-title { font-size:16px; font-weight:600; margin-bottom:10px; }
+  .modal-body { font-size:14px; line-height:1.8; color:#374151; }
+  .modal-foot { text-align:right; margin-top:18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>车型销量及行驶里程分布情况</h1>
+  <div class="sub">按「内部车辆型号」统计车辆累计里程分布（数据来源：新能源车辆接口 + 燃油车辆接口）</div>
+
+  <div class="card">
+    <div class="toolbar">
+      <button class="btn-primary" id="btnRun">开始统计</button>
+      <button class="btn-ghost" id="btnExport" disabled>导出 Excel</button>
+      <label>数据来源
+        <select id="source">
+          <option value="all">全部（新能源+燃油）</option>
+          <option value="new">新能源车辆</option>
+          <option value="fuel">燃油车辆</option>
+        </select>
+      </label>
+      <label>统计口径
+        <select id="scope">
+          <option value="sold">仅已销售车辆</option>
+          <option value="all">其他车辆</option>
+        </select>
+      </label>
+      <div class="spacer"></div>
+      <input type="text" id="kw" placeholder="搜索内部车辆型号（支持多个，逗号分隔）">
+    </div>
+
+    <div class="limit" id="limitTip"></div>
+
+    <div class="progress-wrap" id="progWrap">
+      <div class="bar"><i id="bar"></i></div>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="stats" id="stats" style="display:none">
+      <div class="stat"><div class="k">内部车辆型号数</div><div class="v" id="sModels">-</div></div>
+      <div class="stat"><div class="k">计入统计车辆数</div><div class="v" id="sTotal">-</div></div>
+      <div class="stat"><div class="k">数据总行数</div><div class="v" id="sRows">-</div></div>
+      <div class="stat"><div class="k" id="sSoldLabel">其中已销售车辆数</div><div class="v" id="sSold">-</div></div>
+      <div class="stat"><div class="k">生成时间</div><div class="v" id="sTime" style="font-size:15px">-</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="table-box">
+      <table>
+        <thead>
+          <tr>
+            <th data-key="model">内部车辆型号 <span class="arrow"></span></th>
+            <th data-key="b1">≤50000km <span class="arrow"></span></th>
+            <th data-key="b2">50000-100000km（不包含100000） <span class="arrow"></span></th>
+            <th data-key="b3">100000-200000km <span class="arrow"></span></th>
+            <th data-key="b4">≥200000km <span class="arrow"></span></th>
+            <th data-key="total">实销总数 <span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+        <tfoot id="tfoot"></tfoot>
+      </table>
+      <div class="empty" id="empty">点击「开始统计」，页面将自动拉取数据并生成分布表</div>
+    </div>
+  </div>
+</div>
+
+<div class="mask" id="mask">
+  <div class="modal">
+    <div class="modal-title">提示</div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot"><button class="btn-primary" id="modalOk">确定</button></div>
+  </div>
+</div>
+
+<script>
+/* ============================ 配置 ============================ */
+const SOURCES = {
+  new: {
+    name: '新能源车辆',
+    url: 'http://172.16.106.220:8089/vehicle/info/temp/get/new/data/export',
+    model: ['内部车辆型号'],
+    mileage: ['车辆累计里程'],
+    stock: ['库存状态'],        // 库存状态 == 实销 视为已销售
+    soldDate: [],
+    soldLabel: '其中实销车辆数'
+  },
+  fuel: {
+    name: '燃油车辆',
+    url: 'http://172.16.106.220:8089/vehicle/info/temp/get/fuel/data/export',
+    model: ['内部车俩型号', '内部车辆型号'],   // 燃油导出表头为「车俩型号」
+    mileage: ['累计里程', '车辆累计里程'],
+    stock: [],
+    soldDate: ['销售日期'],     // 燃油无库存状态列，销售日期非空视为已销售
+    soldLabel: '其中已销售车辆数'
+  }
+};
+const COMBINED = { key: 'all', name: '全部（新能源+燃油）', soldLabel: '其中已销售车辆数' };
+const BUCKETS = [
+  { key: 'b1', label: '≤50000km' },
+  { key: 'b2', label: '50000-100000km（不包含100000）' },
+  { key: 'b3', label: '100000-200000km' },
+  { key: 'b4', label: '≥200000km' }
+];
+const LIMIT_MS = 24 * 3600 * 1000;
+const LS_LAST = 'mpd_last_';      // 24 小时限流记录
+const LS_RES = 'mpd_result_';     // 结果缓存
+
+/* ============================ 小工具 ============================ */
+const $ = id => document.getElementById(id);
+const fmt = n => (Number(n) || 0).toLocaleString('zh-CN');
+const pad = n => String(n).padStart(2, '0');
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return store.mem[k]; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { store.mem[k] = v; } },
+  mem: {}
+};
+function remainText(ms) {
+  ms = Math.max(0, ms);
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000), s = Math.floor(ms % 60000 / 1000);
+  return pad(h) + ':' + pad(m) + ':' + pad(s);
+}
+function showModal(html) { $('modalBody').innerHTML = html; $('mask').classList.add('show'); }
+function hideModal() { $('mask').classList.remove('show'); }
+function xmlEsc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function decodeEnt(s) {
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'").replace(/&#(\d+);/g, (m, d) => String.fromCharCode(+d))
+          .replace(/&#x([0-9a-fA-F]+);/g, (m, d) => String.fromCharCode(parseInt(d, 16)))
+          .replace(/&amp;/g, '&');
+}
+function colLetter(n) { let s = ''; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = (n - r - 1) / 26; } return s; }
+function colNumber(letters) { let n = 0; for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64); return n; }
+
+/* ============================ ZIP 解压 ============================ */
+function findZipEntries(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  let eocd = -1;
+  const min = Math.max(0, u8.length - 66000);
+  for (let i = u8.length - 22; i >= min; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('不是有效的 xlsx 文件（找不到 zip 目录）');
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  const entries = {};
+  for (let n = 0; n < count; n++) {
+    if (off + 46 > u8.length || dv.getUint32(off, true) !== 0x02014b50) break;
+    const method = dv.getUint16(off + 10, true);
+    const csize = dv.getUint32(off + 20, true);
+    const nameLen = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const cmtLen = dv.getUint16(off + 32, true);
+    const lho = dv.getUint32(off + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(off + 46, off + 46 + nameLen));
+    const lnLen = dv.getUint16(lho + 26, true);
+    const lxLen = dv.getUint16(lho + 28, true);
+    entries[name] = { method, csize, dataStart: lho + 30 + lnLen + lxLen };
+    off += 46 + nameLen + extraLen + cmtLen;
+  }
+  return entries;
+}
+
+async function inflateToText(u8, onChunk) {
+  const sub = u8.buffer ? u8 : new Uint8Array(u8);
+  if (typeof DecompressionStream !== 'undefined') {
+    let stream;
+    try {
+      stream = new Blob([sub]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    } catch (e) { stream = null; }
+    if (stream) {
+      const reader = stream.getReader();
+      const dec = new TextDecoder('utf-8');
+      while (true) {
+        const r = await reader.read();
+        if (r.done) break;
+        onChunk(dec.decode(r.value, { stream: true }));
+      }
+      onChunk(dec.decode());
+      return;
+    }
+  }
+  onChunk(new TextDecoder('utf-8').decode(inflateRaw(sub)));   // 兜底：自实现 inflate
+}
+
+async function inflateWhole(u8) {
+  let out = '';
+  await inflateToText(u8, c => { out += c; });
+  return out;
+}
+
+/* --- 兜底 inflate（浏览器不支持 DecompressionStream 时使用） --- */
+function inflateRaw(data) {
+  let pos = 0, bitBuf = 0, bitCnt = 0;
+  const out = [];
+  const outLen = 1 << 16;
+  let buf = new Uint8Array(outLen), bufLen = 0;
+  function push(b) {
+    if (bufLen === buf.length) { const nb = new Uint8Array(buf.length * 2); nb.set(buf); buf = nb; }
+    buf[bufLen++] = b;
+  }
+  function bits(need) {
+    while (bitCnt < need) {
+      bitBuf |= data[pos++] << bitCnt;
+      bitCnt += 8;
+    }
+    const val = bitBuf & ((1 << need) - 1);
+    bitBuf >>>= need; bitCnt -= need;
+    return val;
+  }
+  function buildTree(lengths) {
+    const maxBits = 15;
+    const count = new Int32Array(maxBits + 1);
+    for (const l of lengths) count[l]++;
+    count[0] = 0;
+    const offs = new Int32Array(maxBits + 2);
+    for (let b = 1; b <= maxBits; b++) offs[b + 1] = offs[b] + count[b];
+    const symbol = new Int32Array(lengths.length);
+    for (let i = 0; i < lengths.length; i++) if (lengths[i]) symbol[offs[lengths[i]]++] = i;
+    return { count, offs, symbol };
+  }
+  function decode(tree) {
+    let code = 0, first = 0, index = 0;
+    for (let len = 1; len <= 15; len++) {
+      code |= bits(1);
+      const cnt = tree.count[len];
+      if (code - first < cnt) return tree.symbol[index + (code - first)];
+      index += cnt;
+      first = (first + cnt) << 1;
+      code <<= 1;
+    }
+    throw new Error('inflate: 无效的 Huffman 编码');
+  }
+  const lbBase = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+  const lbExtra = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  const dbBase = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+  const dbExtra = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+  const fixedLen = new Uint8Array(288), fixedDist = new Uint8Array(30);
+  for (let i = 0; i < 288; i++) fixedLen[i] = i < 144 ? 8 : (i < 256 ? 9 : (i < 280 ? 7 : 8));
+  for (let i = 0; i < 30; i++) fixedDist[i] = 5;
+  const fixedLTree = buildTree(fixedLen), fixedDTree = buildTree(fixedDist);
+
+  let last = 0;
+  while (!last) {
+    last = bits(1);
+    const type = bits(2);
+    if (type === 0) {
+      bitBuf = 0; bitCnt = 0;
+      const len = data[pos] | (data[pos + 1] << 8); pos += 4;
+      for (let i = 0; i < len; i++) push(data[pos++]);
+      continue;
+    }
+    let lTree, dTree;
+    if (type === 1) { lTree = fixedLTree; dTree = fixedDTree; }
+    else {
+      const hlit = bits(5) + 257, hdist = bits(5) + 1, hclen = bits(4) + 4;
+      const order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+      const cl = new Uint8Array(19);
+      for (let i = 0; i < hclen; i++) cl[order[i]] = bits(3);
+      const clTree = buildTree(cl);
+      const lengths = new Uint8Array(hlit + hdist);
+      let i = 0;
+      while (i < hlit + hdist) {
+        const sym = decode(clTree);
+        if (sym < 16) lengths[i++] = sym;
+        else {
+          let rep = 0, val = 0;
+          if (sym === 16) { val = lengths[i - 1]; rep = 3 + bits(2); }
+          else if (sym === 17) { rep = 3 + bits(3); }
+          else { rep = 11 + bits(7); }
+          while (rep-- > 0) lengths[i++] = val;
+        }
+      }
+      lTree = buildTree(lengths.subarray(0, hlit));
+      dTree = buildTree(lengths.subarray(hlit));
+    }
+    while (true) {
+      const sym = decode(lTree);
+      if (sym === 256) break;
+      if (sym < 256) push(sym);
+      else {
+        const li = sym - 257;
+        const len = lbBase[li] + bits(lbExtra[li]);
+        const ds = decode(dTree);
+        const dist = dbBase[ds] + bits(dbExtra[ds]);
+        let from = bufLen - dist;
+        for (let k = 0; k < len; k++) push(buf[from++]);
+      }
+    }
+  }
+  return buf.subarray(0, bufLen);
+}
+
+/* ============================ xlsx 解析 ============================ */
+function cellValue(cs, strings) {
+  const tm = /\st="([^"]+)"/.exec(cs);
+  const t = tm ? tm[1] : 'n';
+  if (t === 'inlineStr') {
+    const re = /<t[^>]*>([\s\S]*?)<\/t>/g;
+    let m, parts = [];
+    while ((m = re.exec(cs))) parts.push(decodeEnt(m[1]));
+    return parts.join('');
+  }
+  const vm = /<v>([\s\S]*?)<\/v>/.exec(cs);
+  if (!vm) return null;
+  const raw = decodeEnt(vm[1]);
+  if (t === 's') return strings ? (strings[+raw] || '') : '';
+  if (t === 'b') return raw === '1';
+  if (t === 'e' || t === 'str') return raw;
+  const n = Number(raw);
+  return isFinite(n) ? n : null;
+}
+
+function parseRowFull(seg, strings) {
+  const out = {};
+  let i = seg.indexOf('<c');
+  while (i >= 0) {
+    let end = seg.indexOf('</c>', i);
+    const sc = seg.indexOf('/>', i);
+    let stop;
+    if (sc >= 0 && (end < 0 || sc < end)) stop = sc + 2;
+    else if (end >= 0) stop = end + 4;
+    else break;
+    const cs = seg.slice(i, stop);
+    const rm = /\sr="([A-Z]+)\d+"/.exec(cs);
+    if (rm) out[colNumber(rm[1])] = cellValue(cs, strings);
+    i = seg.indexOf('<c', stop);
+  }
+  return out;
+}
+
+function parseRowTargeted(seg, needed, strings) {
+  const out = {};
+  const rm = /^<row[^>]*\sr="(\d+)"/.exec(seg);
+  if (!rm) return out;
+  const rn = rm[1];
+  for (const [col, letter] of needed) {
+    let p = seg.indexOf('r="' + letter + rn + '"');
+    if (p < 0) continue;
+    const s = seg.lastIndexOf('<c', p);
+    if (s < 0) continue;
+    const end = seg.indexOf('</c>', p);
+    const sc = seg.indexOf('/>', p);
+    let stop;
+    if (sc >= 0 && (end < 0 || sc < end)) stop = sc + 2;
+    else if (end >= 0) stop = end + 4;
+    else continue;
+    out[col] = cellValue(seg.slice(s, stop), strings);
+  }
+  return out;
+}
+
+async function parseAndAggregate(u8, cfg, onRows) {
+  const entries = findZipEntries(u8);
+  let strings = null;
+  const ssKey = Object.keys(entries).find(k => k === 'xl/sharedStrings.xml');
+  if (ssKey) {
+    const e = entries[ssKey];
+    const raw = e.method === 0 ? u8.subarray(e.dataStart, e.dataStart + e.csize) : u8.subarray(e.dataStart, e.dataStart + e.csize);
+    const xml = await inflateWhole(raw);
+    strings = [];
+    const re = /<si>([\s\S]*?)<\/si>/g;
+    let m;
+    while ((m = re.exec(xml))) {
+      const ts = [];
+      const tre = /<t[^>]*>([\s\S]*?)<\/t>/g;
+      let t;
+      while ((t = tre.exec(m[1]))) ts.push(decodeEnt(t[1]));
+      strings.push(ts.join(''));
+    }
+  }
+  const sheetKey = Object.keys(entries).find(k => /^xl\/worksheets\/sheet1\.xml$/.test(k))
+    || Object.keys(entries).find(k => /^xl\/worksheets\/.+\.xml$/.test(k));
+  if (!sheetKey) throw new Error('xlsx 中未找到工作表');
+  const se = entries[sheetKey];
+  const sheetData = u8.subarray(se.dataStart, se.dataStart + se.csize);
+  const totalCompressed = sheetData.length;
+
+  let header = null, needed = null;
+  const stats = new Map();
+  const vins = new Set();
+  let totalRows = 0, validRows = 0, soldRows = 0, seen = 0;
+
+  const handleRow = cells => {
+    if (!header) {
+      header = {};
+      for (const col in cells) {
+        const name = cells[col];
+        if (name === null || name === undefined) continue;
+        header[String(name).trim()] = +col;
+      }
+      const find = aliases => { for (const a of aliases) if (a in header) return header[a]; return null; };
+      const modelCol = find(cfg.model), mileageCol = find(cfg.mileage);
+      const stockCol = find(cfg.stock), soldDateCol = find(cfg.soldDate);
+      const vinCol = ('车辆VIN' in header) ? header['车辆VIN'] : 1;
+      if (modelCol === null || mileageCol === null) {
+        throw new Error('未找到字段：' + cfg.model.join('/') + '、' + cfg.mileage.join('/'));
+      }
+      needed = { modelCol, mileageCol, stockCol, soldDateCol, vinCol };
+      const map = new Map();
+      [modelCol, mileageCol, vinCol].forEach(c => map.set(c, colLetter(c)));
+      if (stockCol !== null) map.set(stockCol, colLetter(stockCol));
+      if (soldDateCol !== null) map.set(soldDateCol, colLetter(soldDateCol));
+      needed.letters = map;
+      return;
+    }
+    seen++;
+    const model = cells[needed.modelCol];
+    if (model === null || model === undefined || String(model).trim() === '') return;
+    totalRows++;
+    const vin = cells[needed.vinCol];
+    if (vin) vins.add(String(vin).trim());
+    let isSold = true;
+    if (needed.stockCol !== null) {
+      const st = cells[needed.stockCol];
+      isSold = st ? String(st).trim() === '实销' : true;
+    } else if (needed.soldDateCol !== null) {
+      const sd = cells[needed.soldDateCol];
+      isSold = !!(sd && String(sd).trim() !== '' && String(sd).trim() !== 'None');
+    }
+    if (isSold) soldRows++;
+    const key = String(model).trim();
+    let item = stats.get(key);
+    if (!item) {
+      item = { model: key, sold: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0, noMileage: 0 }, all: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0, noMileage: 0 } };
+      stats.set(key, item);
+    }
+    const target = isSold ? item.sold : item.all;
+    target.total++;
+    const m = cells[needed.mileageCol];
+    const mileage = (typeof m === 'number' && isFinite(m)) ? m : (m === null || m === '' || m === undefined ? null : Number(m));
+    if (mileage === null || !isFinite(mileage)) { target.noMileage++; return; }
+    validRows++;
+    target[mileage <= 50000 ? 'b1' : (mileage < 100000 ? 'b2' : (mileage < 200000 ? 'b3' : 'b4'))]++;
+  };
+
+  let buf = '';
+  let lastReport = 0;
+  await inflateToText(sheetData, chunk => {
+    buf += chunk;
+    let start = 0;
+    while (true) {
+      const s = buf.indexOf('<row ', start);
+      if (s < 0) break;
+      const close = buf.indexOf('</row>', s);
+      const nextOpen = buf.indexOf('<row ', s + 5);
+      let segEnd;
+      if (close < 0) break;
+      if (nextOpen >= 0 && nextOpen < close) segEnd = nextOpen;      // 空行自闭合
+      else segEnd = close + 6;
+      const seg = buf.slice(s, segEnd);
+      handleRow(header ? parseRowTargeted(seg, needed.letters, strings) : parseRowFull(seg, strings));
+      start = segEnd;
+    }
+    if (start > 0) buf = buf.slice(start);
+    if (seen - lastReport >= 5000) { lastReport = seen; onRows && onRows(seen); }
+  });
+  onRows && onRows(seen);
+
+  const items = Array.from(stats.values())
+    .sort((a, b) => (b.sold.b1 + b.sold.b2 + b.sold.b3 + b.sold.b4) - (a.sold.b1 + a.sold.b2 + a.sold.b3 + a.sold.b4) || a.model.localeCompare(b.model));
+  return {
+    items,
+    generatedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+    summary: { models: items.length, rows: totalRows, validRows, vehicles: vins.size, soldRows }
+  };
+}
+
+/* ============================ 拉取与合并 ============================ */
+async function fetchBuffer(url, onPct) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('下载失败：HTTP ' + resp.status);
+  const len = +(resp.headers.get('Content-Length') || 0);
+  if (!resp.body || !len) return new Uint8Array(await resp.arrayBuffer());
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let got = 0;
+  while (true) {
+    const r = await reader.read();
+    if (r.done) break;
+    chunks.push(r.value);
+    got += r.value.length;
+    onPct && onPct(Math.min(100, Math.round(got * 100 / len)), got, len);
+  }
+  const all = new Uint8Array(got);
+  let p = 0;
+  for (const c of chunks) { all.set(c, p); p += c.length; }
+  return all;
+}
+
+async function fetchSource(srcKey, onProgress) {
+  const cfg = SOURCES[srcKey];
+  onProgress('正在请求' + cfg.name + '数据接口（约需 1~2 分钟）...', 5);
+  const resp = await fetch(cfg.url, { headers: { Accept: 'application/json' } });
+  const json = await resp.json();
+  if (json.result !== 'SUCCEED') throw new Error('接口返回失败：' + (json.errorMessage || JSON.stringify(json).slice(0, 120)));
+  const url = (json.data || '').trim();
+  if (!/^https?:/i.test(url)) throw new Error('接口未返回有效下载链接：' + url.slice(0, 80));
+  onProgress('正在下载车辆数据...', 25);
+  const buf = await fetchBuffer(url, pct => onProgress('正在下载车辆数据 ' + pct + '%', 25 + Math.round(pct * 0.3)));
+  onProgress('正在解析并统计...', 58);
+  const res = await parseAndAggregate(buf, cfg, rows => onProgress('已解析 ' + fmt(rows) + ' 行', 58 + Math.min(37, rows / 3000)));
+  res.source = srcKey;
+  res.sourceName = cfg.name;
+  res.soldLabel = cfg.soldLabel;
+  return res;
+}
+
+function mergeResults(parts) {
+  const items = new Map();
+  for (const res of parts) {
+    for (const it of res.items) {
+      let cur = items.get(it.model);
+      if (!cur) {
+        cur = { model: it.model, sold: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0, noMileage: 0 }, all: { b1: 0, b2: 0, b3: 0, b4: 0, total: 0, noMileage: 0 } };
+        items.set(it.model, cur);
+      }
+      for (const scope of ['sold', 'all']) {
+        for (const k of ['b1', 'b2', 'b3', 'b4', 'total', 'noMileage']) cur[scope][k] += it[scope][k];
+      }
+    }
+  }
+  const list = Array.from(items.values())
+    .sort((a, b) => (b.sold.b1 + b.sold.b2 + b.sold.b3 + b.sold.b4) - (a.sold.b1 + a.sold.b2 + a.sold.b3 + a.sold.b4) || a.model.localeCompare(b.model));
+  return {
+    source: 'all',
+    sourceName: COMBINED.name,
+    soldLabel: COMBINED.soldLabel,
+    items: list,
+    generatedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+    summary: {
+      models: list.length,
+      rows: parts.reduce((s, r) => s + r.summary.rows, 0),
+      validRows: parts.reduce((s, r) => s + r.summary.validRows, 0),
+      vehicles: parts.reduce((s, r) => s + r.summary.vehicles, 0),
+      soldRows: parts.reduce((s, r) => s + r.summary.soldRows, 0)
+    }
+  };
+}
+
+/* ============================ 结果处理 ============================ */
+function flatten(res, scope) {
+  const key = scope === 'all' ? 'all' : 'sold';
+  const rows = res.items.map(it => {
+    const d = it[key];
+    return {
+      model: it.model, b1: d.b1, b2: d.b2, b3: d.b3, b4: d.b4,
+      total: d.b1 + d.b2 + d.b3 + d.b4, rawTotal: d.total, noMileage: d.noMileage
+    };
+  });
+  return rows.sort((a, b) => b.total - a.total || a.model.localeCompare(b.model));
+}
+
+let results = {};        // source -> result
+let running = false;
+let sortKey = 'total', sortAsc = false;
+
+function currentSource() { return $('source').value; }
+function currentScope() { return $('scope').value; }
+function sourceName() { const o = $('source').selectedOptions[0]; return o ? o.textContent : ''; }
+
+function visibleRows() {
+  const res = results[currentSource()];
+  if (!res) return [];
+  let rows = flatten(res, currentScope());
+  const kw = $('kw').value.trim();
+  if (kw) {
+    const keys = kw.split(/[,，\s]+/).filter(Boolean).map(s => s.toUpperCase());
+    rows = rows.filter(r => keys.some(k => r.model.toUpperCase().includes(k)));
+  }
+  rows.sort((a, b) => {
+    let x = a[sortKey], y = b[sortKey];
+    if (typeof x === 'string') { x = x.toLowerCase(); y = y.toLowerCase(); }
+    return sortAsc ? (x < y ? -1 : x > y ? 1 : 0) : (x < y ? 1 : x > y ? -1 : 0);
+  });
+  return rows;
+}
+
+function render() {
+  const tb = $('tbody'), tf = $('tfoot');
+  const rows = visibleRows();
+  if (!rows.length) {
+    tb.innerHTML = ''; tf.innerHTML = '';
+    const e = $('empty');
+    e.style.display = 'block';
+    e.textContent = running
+      ? '正在拉取【' + sourceName() + '】接口数据，接口生成导出文件约需 1~2 分钟，请耐心等待...'
+      : '点击「开始统计」，页面将自动拉取【' + sourceName() + '】数据并生成分布表';
+    return;
+  }
+  $('empty').style.display = 'none';
+  tb.innerHTML = rows.map(r => '<tr><td>' + r.model + '</td><td>' + fmt(r.b1) + '</td><td>' + fmt(r.b2) +
+    '</td><td>' + fmt(r.b3) + '</td><td>' + fmt(r.b4) + '</td><td>' + fmt(r.total) + '</td></tr>').join('');
+  const sum = k => rows.reduce((s, r) => s + r[k], 0);
+  const noMileage = rows.reduce((s, r) => s + (r.rawTotal - r.total), 0);
+  tf.innerHTML = '<tr><td>合计（' + rows.length + ' 个型号）</td><td>' + fmt(sum('b1')) + '</td><td>' + fmt(sum('b2')) +
+    '</td><td>' + fmt(sum('b3')) + '</td><td>' + fmt(sum('b4')) + '</td><td>' + fmt(sum('total')) +
+    (noMileage ? '<div style="font-weight:400;font-size:12px;color:#6b7280">另有 ' + fmt(noMileage) + ' 辆无里程数据</div>' : '') + '</td></tr>';
+  document.querySelectorAll('thead th').forEach(th => {
+    th.querySelector('.arrow').textContent = th.dataset.key === sortKey ? (sortAsc ? ' ▲' : ' ▼') : '';
+  });
+}
+
+function setStats(res) {
+  const rows = flatten(res, currentScope());
+  $('sModels').textContent = fmt(rows.filter(r => r.total > 0).length);
+  $('sTotal').textContent = fmt(rows.reduce((s, r) => s + r.total, 0));
+  $('sRows').textContent = fmt(res.summary.rows);
+  $('sSold').textContent = fmt(res.summary.soldRows);
+  $('sSoldLabel').textContent = res.soldLabel || '其中已销售车辆数';
+  $('sTime').textContent = res.generatedAt || '-';
+  $('stats').style.display = 'flex';
+}
+
+function refreshView() {
+  const res = results[currentSource()];
+  if (res) { setStats(res); $('btnExport').disabled = false; } else { $('stats').style.display = 'none'; $('btnExport').disabled = true; }
+  $('btnRun').textContent = res ? '重新统计' : '开始统计';
+  $('btnRun').disabled = running;
+  render();
+  updateLimitTip();
+}
+
+function updateLimitTip() {
+  const src = currentSource();
+  const last = +(store.get(LS_LAST + src) || 0);
+  const remain = last + LIMIT_MS - Date.now();
+  $('limitTip').textContent = remain > 0
+    ? '【' + sourceName() + '】上次统计时间 ' + new Date(last).toLocaleString('zh-CN', { hour12: false }) + '，距下次可统计还有 ' + remainText(remain)
+    : '';
+}
+
+/* ============================ 统计主流程 ============================ */
+async function runStats() {
+  const src = currentSource();
+  const last = +(store.get(LS_LAST + src) || 0);
+  const remain = last + LIMIT_MS - Date.now();
+  if (running) { showModal('已有统计任务正在执行中，请等待当前任务完成后再试。'); return; }
+  if (remain > 0) {
+    showModal('【' + sourceName() + '】在 24 小时内只能统计一次。<br>上次统计时间：<b>' +
+      new Date(last).toLocaleString('zh-CN', { hour12: false }) + '</b><br>下次可统计时间：<b>' +
+      new Date(last + LIMIT_MS).toLocaleString('zh-CN', { hour12: false }) + '</b><br>剩余时间：<b>' + remainText(remain) + '</b>');
+    return;
+  }
+
+  running = true;
+  $('btnRun').disabled = true;
+  $('btnRun').textContent = '统计中...';
+  $('progWrap').classList.add('show');
+  $('empty').style.display = 'block';
+  render();
+
+  const setProg = (msg, pct) => {
+    $('bar').style.width = Math.max(0, Math.min(100, pct || 0)) + '%';
+    $('msg').className = 'msg';
+    $('msg').textContent = msg;
+  };
+
+  try {
+    const keys = src === 'all' ? Object.keys(SOURCES) : [src];
+    const parts = [];
+    const span = 100 / keys.length;
+    for (let i = 0; i < keys.length; i++) {
+      const res = await fetchSource(keys[i], (msg, pct) => setProg('[' + SOURCES[keys[i]].name + '] ' + msg, i * span + (pct || 0) * span / 100));
+      parts.push(res);
+      results[keys[i]] = res;
+      try { store.set(LS_RES + keys[i], JSON.stringify(res)); } catch (e) { }
+    }
+    const final = src === 'all' ? mergeResults(parts) : parts[0];
+    results[src] = final;
+    try { store.set(LS_RES + src, JSON.stringify(final)); } catch (e) { }
+    const now = Date.now();
+    store.set(LS_LAST + src, String(now));
+    if (src === 'all') for (const k of Object.keys(SOURCES)) store.set(LS_LAST + k, String(now));
+    setProg('统计完成', 100);
+  } catch (err) {
+    $('msg').className = 'msg error';
+    $('msg').textContent = '失败：' + (err && err.message ? err.message : err);
+  } finally {
+    running = false;
+    refreshView();
+  }
+}
+
+/* ============================ 导出 Excel（本地生成 xlsx） ============================ */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(u8) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function strToU8(s) { return new TextEncoder().encode(s); }
+function zipStore(files) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const f of files) {
+    const nameU8 = strToU8(f.name);
+    const crc = crc32(f.data);
+    const lh = new Uint8Array(30 + nameU8.length);
+    const dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(6, 0x0800, true);      // UTF-8 文件名
+    dv.setUint16(8, 0, true);           // 存储方式（不压缩）
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, f.data.length, true);
+    dv.setUint32(22, f.data.length, true);
+    dv.setUint16(26, nameU8.length, true);
+    lh.set(nameU8, 30);
+    locals.push(lh, f.data);
+
+    const ch = new Uint8Array(46 + nameU8.length);
+    const cv = new DataView(ch.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0x0800, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, f.data.length, true);
+    cv.setUint32(24, f.data.length, true);
+    cv.setUint16(28, nameU8.length, true);
+    cv.setUint32(42, offset, true);
+    ch.set(nameU8, 46);
+    centrals.push(ch);
+    offset += lh.length + f.data.length;
+  }
+  const centralSize = centrals.reduce((s, c) => s + c.length, 0);
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, centralSize, true);
+  ev.setUint32(16, offset, true);
+  const all = locals.concat(centrals, [eocd]);
+  const total = all.reduce((s, a) => s + a.length, 0);
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const a of all) { out.set(a, p); p += a.length; }
+  return out;
+}
+function buildXlsx(rows) {
+  const headers = ['内部车辆型号'].concat(BUCKETS.map(b => b.label), ['实销总数']);
+  const cellXml = (ref, val, style) => {
+    if (typeof val === 'number') return '<c r="' + ref + '"' + (style ? ' s="' + style + '"' : '') + '><v>' + val + '</v></c>';
+    return '<c r="' + ref + '" t="inlineStr"' + (style ? ' s="' + style + '"' : '') + '><is><t xml:space="preserve">' + xmlEsc(val) + '</t></is></c>';
+  };
+  let body = '<row r="1">' + headers.map((h, i) => cellXml(colLetter(i + 1) + '1', h, 1)).join('') + '</row>';
+  rows.forEach((r, ri) => {
+    const rn = ri + 2;
+    const vals = [r.model, r.b1, r.b2, r.b3, r.b4, r.total];
+    body += '<row r="' + rn + '">' + vals.map((v, i) => cellXml(colLetter(i + 1) + rn, v, 0)).join('') + '</row>';
+  });
+  const rn = rows.length + 2;
+  const sums = ['合计'].concat(BUCKETS.map(b => rows.reduce((s, r) => s + r[b.key], 0)), [rows.reduce((s, r) => s + r.total, 0)]);
+  body += '<row r="' + rn + '">' + sums.map((v, i) => cellXml(colLetter(i + 1) + rn, v, 1)).join('') + '</row>';
+
+  const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<sheetData>' + body + '</sheetData></worksheet>';
+  const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+    '</Types>';
+  const rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    '</Relationships>';
+  const workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets><sheet name="车型里程分布" sheetId="1" r:id="rId1"/></sheets></workbook>';
+  const wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+    '</Relationships>';
+  const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="2"><font><sz val="11"/><name val="\u5fae\u8f6f\u96c5\u9ed1"/></font>' +
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="\u5fae\u8f6f\u96c5\u9ed1"/></font></fonts>' +
+    '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+    '<fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+    '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+    '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1">' +
+    '<alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="\u5e38\u89c4" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+
+  return zipStore([
+    { name: '[Content_Types].xml', data: strToU8(contentTypes) },
+    { name: '_rels/.rels', data: strToU8(rels) },
+    { name: 'xl/workbook.xml', data: strToU8(workbook) },
+    { name: 'xl/_rels/workbook.xml.rels', data: strToU8(wbRels) },
+    { name: 'xl/styles.xml', data: strToU8(styles) },
+    { name: 'xl/worksheets/sheet1.xml', data: strToU8(sheet) }
+  ]);
+}
+function exportExcel() {
+  const res = results[currentSource()];
+  if (!res) return;
+  const rows = flatten(res, currentScope());
+  const u8 = buildXlsx(rows);
+  const blob = new Blob([u8], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const d = new Date();
+  const stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (res.sourceName || '统计') + '_车型销量及行驶里程分布情况_' + stamp + '.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+}
+
+/* ============================ 事件绑定 ============================ */
+$('btnRun').onclick = runStats;
+$('btnExport').onclick = exportExcel;
+$('modalOk').onclick = hideModal;
+$('mask').onclick = e => { if (e.target === $('mask')) hideModal(); };
+$('source').onchange = refreshView;
+$('scope').onchange = refreshView;
+$('kw').oninput = render;
+document.querySelectorAll('thead th').forEach(th => {
+  th.onclick = () => {
+    const k = th.dataset.key;
+    if (sortKey === k) sortAsc = !sortAsc;
+    else { sortKey = k; sortAsc = (k === 'model'); }
+    render();
+  };
+});
+setInterval(updateLimitTip, 1000);
+
+(function init() {
+  for (const k of ['all', 'new', 'fuel']) {
+    const s = store.get(LS_RES + k);
+    if (s) { try { results[k] = JSON.parse(s); } catch (e) { } }
+  }
+  refreshView();
+})();
+</script>
+</body>
+</html>
